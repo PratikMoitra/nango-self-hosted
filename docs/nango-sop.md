@@ -91,6 +91,9 @@ curl -s 'https://nango.yourdomain.com/integrations' \
 
 ## SOP 2: Creating an OAuth Connection
 
+> [!WARNING]
+> Connect sessions expire in **30 minutes**. Always use the one-shot commands below that create the session AND open the browser in a single step. Never copy a `connect_link` to use later — it will be dead by then.
+
 ### Method A — Via Dashboard "Connect" Button (Primary)
 
 1. Go to `https://nango.yourdomain.com` → **Connections** → **+ Add Connection**
@@ -100,43 +103,102 @@ curl -s 'https://nango.yourdomain.com/integrations' \
 5. Select the integration and authorize with the provider (Google, etc.)
 6. The popup closes and the connection appears in the list
 
-### Method B — Via API (Programmatic / Fallback)
+### Method B — One-Shot CLI (Create + Open in One Command)
 
-Use this when:
-- Connecting from an automated workflow
-- Dashboard popup is blocked by browser
-- Creating connections for end users in your app
+Use this when the dashboard popup is blocked, or when connecting from the terminal.
+
+**Single account — single integration:**
 
 ```bash
-# 1. Create a connect session
-DEV_KEY="<YOUR_NANGO_DEV_KEY>"
-curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
-  -H "Authorization: Bearer $DEV_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "end_user": {
-      "id": "<YOUR_USER_ID>",
-      "display_name": "<YOUR_NAME>",
-      "email": "<YOUR_EMAIL>"
-    },
-    "allowed_integrations": ["google-calendar"]
-  }'
-
-# Response includes:
-# "connect_link": "https://connect.yourdomain.com/?session_token=nango_connect_session_..."
-
-# 2. Open the connect_link in a browser to authorize
-# 3. Verify the connection was created
-curl -s 'https://nango.yourdomain.com/connections' \
-  -H "Authorization: Bearer $DEV_KEY" | python3 -m json.tool
+# Creates session and opens browser in ONE step (session expires in 30 min)
+NANGO_KEY="<YOUR_NANGO_DEV_KEY>" && \
+open "$(curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
+  -H "Authorization: Bearer $NANGO_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"end_user":{"id":"<YOUR_USER_ID>-personal","display_name":"Pratik (Personal)","email":"<YOUR_EMAIL>"},"allowed_integrations":["google-mail"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["connect_link"])')"
 ```
 
-### Method C — Direct OAuth URL (Low-Level)
+**Single account — multiple integrations at once (Gmail + Calendar + Drive):**
 
 ```bash
-# Requires a connect session token first (from Method B step 1)
-# Then construct the direct OAuth URL:
-open "https://nango.yourdomain.com/oauth/connect/google-calendar?connect_session_token=<TOKEN>"
+NANGO_KEY="<YOUR_NANGO_DEV_KEY>" && \
+open "$(curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
+  -H "Authorization: Bearer $NANGO_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"end_user":{"id":"<YOUR_USER_ID>-personal","display_name":"Pratik (Personal)","email":"<YOUR_EMAIL>"},"allowed_integrations":["google-mail","google-calendar","google-drive-personal"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["connect_link"])')"
+```
+
+> [!TIP]
+> The `open` command (macOS) launches the URL in your default browser immediately. On Linux, use `xdg-open` instead.
+
+### Method C — Multi-Account Setup (Multiple Google Workspace Accounts)
+
+When you have multiple Google accounts (personal, work, business), create **separate connections** for each.
+Each gets a unique `end_user.id` — this is how agents distinguish between accounts.
+
+**Step 1 — Run each one-shot command. Sign in with the CORRECT Google account each time:**
+
+```bash
+NANGO_KEY="<YOUR_NANGO_DEV_KEY>"
+
+# ── Personal (<YOUR_EMAIL>) ──
+open "$(curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
+  -H "Authorization: Bearer $NANGO_KEY" -H 'Content-Type: application/json' \
+  -d '{"end_user":{"id":"<YOUR_USER_ID>-personal","display_name":"Pratik (Personal)","email":"<YOUR_EMAIL>"},"allowed_integrations":["google-mail","google-calendar","google-drive-personal"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["connect_link"])')"
+
+# ⏳ Complete the OAuth in browser, THEN run the next one:
+
+# ── OneZipp Work (<YOUR_WORK_EMAIL>) ──
+open "$(curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
+  -H "Authorization: Bearer $NANGO_KEY" -H 'Content-Type: application/json' \
+  -d '{"end_user":{"id":"<YOUR_USER_ID>-work","display_name":"Pratik (OneZipp)","email":"<YOUR_WORK_EMAIL>"},"allowed_integrations":["google-mail","google-calendar","google-drive-personal"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["connect_link"])')"
+
+# ⏳ Complete the OAuth in browser, THEN run the next one:
+
+# ── Kalakavya Business (<YOUR_BUSINESS_EMAIL>) ──
+open "$(curl -s -X POST 'https://nango.yourdomain.com/connect/sessions' \
+  -H "Authorization: Bearer $NANGO_KEY" -H 'Content-Type: application/json' \
+  -d '{"end_user":{"id":"<YOUR_USER_ID>-business","display_name":"Pratik (Kalakavya)","email":"<YOUR_BUSINESS_EMAIL>"},"allowed_integrations":["google-mail","google-calendar","google-drive-personal"]}' \
+  | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["connect_link"])')"
+```
+
+**Step 2 — List all connections and note the connection IDs:**
+
+```bash
+curl -s 'https://nango.yourdomain.com/connections' \
+  -H "Authorization: Bearer $NANGO_KEY" \
+  | python3 -c "
+import sys,json
+conns = json.load(sys.stdin).get('connections',[])
+for c in conns:
+    eu = c.get('end_user',{})
+    print(f'{eu.get(\"endUserId\",\"?\"):20s} | {c[\"provider_config_key\"]:25s} | {c[\"connection_id\"]}')
+"
+```
+
+**Step 3 — Use in agents by specifying the right `Connection-Id`:**
+
+```bash
+# Read OneZipp Gmail (not personal)
+curl -s 'https://nango.yourdomain.com/proxy/gmail/v1/users/me/messages?maxResults=5' \
+  -H "Authorization: Bearer $NANGO_KEY" \
+  -H "Connection-Id: <onezipp_connection_id>" \
+  -H "Provider-Config-Key: google-mail"
+```
+
+> [!IMPORTANT]
+> When the Connect UI opens, make sure you're signing into the **correct Google account**. If Chrome auto-picks the wrong one, use an incognito window or click "Use another account" on the Google sign-in page.
+
+### Method D — Verify Connections
+
+```bash
+# List all connections with account details
+curl -s 'https://nango.yourdomain.com/connections' \
+  -H "Authorization: Bearer $NANGO_KEY" | python3 -m json.tool
 ```
 
 > [!CAUTION]
