@@ -1,0 +1,103 @@
+# Nango Self-Hosted Docker Compose for Coolify
+# Replace all <PLACEHOLDER> values with your actual credentials
+#
+# Key points:
+# - nango-server exposes TWO ports: 3003 (dashboard+API) and 3009 (Connect UI)
+# - Both ports need Cloudflare Tunnel routes to separate subdomains
+# - FLAG_SERVE_CONNECT_UI=true runs the Connect UI SPA on port 3009
+# - NANGO_PUBLIC_CONNECT_URL must point to the Connect UI subdomain
+
+services:
+  nango-db:
+    image: 'postgres:16.0-alpine'
+    container_name: nango-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nango
+      POSTGRES_USER: nango
+      POSTGRES_PASSWORD: '<GENERATE_STRONG_PASSWORD>'
+    volumes:
+      - nango-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U nango']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nango-net
+
+  nango-redis:
+    image: 'redis:7.2.4-alpine'
+    container_name: nango-redis
+    restart: unless-stopped
+    volumes:
+      - nango-redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nango-net
+
+  nango-server:
+    image: 'nangohq/nango-server:hosted'
+    container_name: nango-server
+    restart: unless-stopped
+    ports:
+      # Dashboard + API (map to your host port for Cloudflare Tunnel)
+      - '<HOST_IP>:<DASHBOARD_PORT>:3003'
+      # Connect UI (map to a DIFFERENT host port for a separate subdomain)
+      - '<HOST_IP>:<CONNECT_UI_PORT>:3009'
+    environment:
+      # --- Encryption ---
+      NANGO_ENCRYPTION_KEY: '<GENERATE_32_BYTE_BASE64_KEY>'
+      # To generate: openssl rand -base64 32
+
+      # --- Database ---
+      NANGO_DB_USER: nango
+      NANGO_DB_PASSWORD: '<SAME_PASSWORD_AS_POSTGRES>'
+      NANGO_DB_HOST: nango-db
+      NANGO_DB_NAME: nango
+      RECORDS_DATABASE_URL: 'postgresql://nango:<PASSWORD>@nango-db:5432/nango'
+
+      # --- Redis ---
+      NANGO_REDIS_URL: 'redis://nango-redis:6379'
+
+      # --- Server ---
+      SERVER_PORT: 3003
+      NANGO_SERVER_URL: 'https://nango.yourdomain.com'
+      NANGO_PUBLIC_SERVER_URL: 'https://nango.yourdomain.com'
+
+      # --- Connect UI (CRITICAL for dashboard "Connect" button) ---
+      FLAG_SERVE_CONNECT_UI: 'true'
+      NANGO_CONNECT_UI_PORT: 3009
+      NANGO_PUBLIC_CONNECT_URL: 'https://connect.yourdomain.com'
+
+      # --- Auth ---
+      FLAG_AUTH_ENABLED: 'true'
+      AUTH_ALLOW_SIGNUP: 'true'
+
+      # --- Logging ---
+      LOG_LEVEL: info
+
+    depends_on:
+      nango-db:
+        condition: service_healthy
+      nango-redis:
+        condition: service_healthy
+    networks:
+      - nango-net
+
+volumes:
+  nango-pgdata:
+  nango-redisdata:
+
+networks:
+  nango-net:
+
+# Cloudflare Tunnel Configuration (add these ingress rules):
+# - hostname: nango.yourdomain.com
+#   service: http://<HOST_IP>:<DASHBOARD_PORT>
+# - hostname: connect.yourdomain.com
+#   service: http://<HOST_IP>:<CONNECT_UI_PORT>

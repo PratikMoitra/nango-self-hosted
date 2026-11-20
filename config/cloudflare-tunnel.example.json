@@ -1,0 +1,35 @@
+{
+  "_comment": "Add these entries to your Cloudflare Tunnel ingress config (before the catch-all 404 rule)",
+  "ingress_rules": [
+    {
+      "hostname": "nango.yourdomain.com",
+      "service": "http://<HOST_IP>:<DASHBOARD_HOST_PORT>",
+      "originRequest": {
+        "httpHostHeader": "nango.yourdomain.com"
+      },
+      "_description": "Nango Dashboard + API (container port 3003)"
+    },
+    {
+      "hostname": "connect.yourdomain.com",
+      "service": "http://<HOST_IP>:<CONNECT_UI_HOST_PORT>",
+      "originRequest": {
+        "httpHostHeader": "connect.yourdomain.com"
+      },
+      "_description": "Nango Connect UI SPA (container port 3009)"
+    }
+  ],
+  "dns_records": [
+    {
+      "type": "CNAME",
+      "name": "nango",
+      "content": "<TUNNEL_ID>.cfargotunnel.com",
+      "proxied": true
+    },
+    {
+      "type": "CNAME",
+      "name": "connect",
+      "content": "<TUNNEL_ID>.cfargotunnel.com",
+      "proxied": true
+    }
+  ]
+}
